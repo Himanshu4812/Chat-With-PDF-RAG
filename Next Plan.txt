@@ -1,0 +1,521 @@
+# Complete RAG Project Performance Optimization Plan (8 GB RAM / CPU-Only)
+
+## Project Objective
+
+I am facing performance issues with my local RAG (Retrieval-Augmented Generation) project. When I ask questions about an uploaded PDF, it takes too much time to generate answers. My laptop also becomes slow, sometimes freezes, and occasionally becomes unresponsive during execution.
+
+I want you to thoroughly inspect, optimize, and improve my existing RAG project so that it provides fast, accurate, and reliable answers during my college presentation.
+
+**IMPORTANT: I cannot spend money on hardware upgrades, additional RAM, a dedicated GPU, or paid APIs. You must optimize the project using my existing hardware only.**
+
+Do not suggest hardware upgrades as the solution. Focus entirely on software optimization.
+
+---
+
+## 1. My Existing Hardware Configuration
+
+The following information was obtained directly from my laptop:
+
+- Processor: Intel Core i5-12500H
+- CPU: 12 cores / 16 threads
+- RAM: 8 GB (2 × 4 GB DDR4 3200 MHz)
+- GPU: Intel integrated graphics (no dedicated GPU)
+- Free RAM during inspection: Approximately 0.8 GB
+- C drive free space: Approximately 95.6 GB
+- D drive free space: Approximately 30.4 GB
+- Windows page file: 16.6 GB allocated
+- Ollama version: 0.40.15
+
+### Current Ollama Models
+
+1. `phi4-mini:3.8b` — approximately 3.1 GB
+2. `nomic-embed-text:latest` — approximately 389 MB
+
+Ollama reported both models running on 100% CPU.
+
+### Current Project Configuration
+
+- Backend: Python / FastAPI
+- Frontend: Next.js
+- LLM runtime: Ollama
+- Generation model: Phi-4 Mini 3.8B
+- Embedding model: Nomic Embed Text
+- Project uses PDF-based document retrieval.
+- Environment variable: `OLLAMA_HOST=http://localhost:11434`
+- Frontend API URL: `http://localhost:8001`
+
+The RAG service is located at:
+
+`src/api/services/rag_service.py`
+
+The exact project structure must be inspected before making changes.
+
+---
+
+## 2. Main Performance Problems
+
+The previous investigation identified these potential bottlenecks:
+
+1. Insufficient RAM while running Windows, Ollama, FastAPI, Next.js and the browser simultaneously.
+2. CPU-based LLM inference instead of dedicated GPU inference.
+3. MultiQueryRetriever generates alternative queries using an additional LLM call before retrieval.
+4. BM25/hybrid retrieval appears to scan the vector collection unnecessarily and may fail because EnsembleRetriever is unavailable.
+5. Too many document chunks are retrieved for each question.
+6. The context window is currently 4096.
+7. Next.js development mode consumes additional memory and causes compilation delays.
+8. Model loading and unloading may increase response times.
+9. PDF extraction or embedding generation may be repeated unnecessarily.
+
+Investigate each issue independently. Do not assume every suspected issue is necessarily present in the current code.
+
+---
+
+# 3. Phase 1: Optimize the Existing RAG Pipeline
+
+This phase is the highest priority.
+
+### A. Remove unnecessary MultiQueryRetriever processing
+
+- Inspect the current retriever implementation.
+- If MultiQueryRetriever is being used, replace it with a direct vector retriever.
+- Avoid making an additional LLM call just to generate alternative search queries.
+- Retrieve relevant document chunks directly using the user's original question.
+- Preserve source-document metadata and page references.
+- Ensure that answers remain grounded in the uploaded PDF.
+
+### B. Optimize document retrieval
+
+Reduce the default retrieval count.
+
+Current configuration:
+- Retrieval chunks: 10
+
+Target configuration:
+- Retrieval chunks: 4
+
+Make this configurable through environment variables rather than hardcoding values throughout the project.
+
+For example:
+
+`RETRIEVAL_MAX_CHUNKS=4`
+
+Do not blindly reduce the number of chunks if testing demonstrates that relevant information is being missed. Compare retrieval quality before and after the modification.
+
+### C. Disable unnecessary hybrid search
+
+Inspect the BM25/hybrid search implementation.
+
+If BM25 is broken, unavailable, or providing no measurable improvement:
+
+- Disable hybrid search.
+- Use the existing vector retriever.
+- Avoid scanning the entire vector database on every question.
+- Remove unnecessary initialization or computation.
+
+Use:
+
+`ENABLE_HYBRID_SEARCH=False`
+
+Preserve the option to enable hybrid search later if it is fixed and proven useful.
+
+### D. Optimize Ollama generation settings
+
+Use a smaller context window.
+
+Target:
+
+- `num_ctx = 2048`
+- `num_predict = 512`
+
+Inspect the existing ChatOllama configuration and apply the settings using the correct supported API for the installed library versions.
+
+Do not introduce incompatible parameters.
+
+Also:
+- Avoid excessively long system prompts.
+- Remove redundant instructions.
+- Keep answers concise but informative.
+- Preserve citations and source references.
+- Avoid generating unnecessary text.
+
+### E. Limit Ollama parallel processing
+
+Configure:
+
+`OLLAMA_NUM_PARALLEL=1`
+
+Consider:
+
+`OLLAMA_MAX_LOADED_MODELS=1`
+
+However, test the effects on model switching and embedding generation. Do not blindly introduce settings that cause frequent model unloading and reloading.
+
+The objective is to prevent unnecessary memory consumption while maintaining reasonable response speed.
+
+---
+
+# 4. Phase 2: Evaluate a Smaller Generation Model
+
+My current generation model is:
+
+`phi4-mini:3.8b`
+
+I want to evaluate a smaller model because my laptop has only 8 GB RAM.
+
+### Proposed replacement
+
+`llama3.2:1b`
+
+Download command:
+
+`ollama pull llama3.2:1b`
+
+Run command:
+
+`ollama run llama3.2:1b`
+
+Alternative model for comparison:
+
+`qwen2.5:1.5b`
+
+### Important requirements
+
+1. Do not immediately delete Phi-4 Mini.
+2. First install and test Llama 3.2 1B.
+3. Compare both models using identical PDF questions.
+4. Measure response time, answer quality, retrieval grounding and citation accuracy.
+5. Check whether the smaller model follows the RAG prompt correctly.
+6. Check whether it hallucinates answers outside the PDF.
+7. Verify that it can answer questions involving multiple document sections.
+
+If Llama 3.2 1B performs satisfactorily, make it the default generation model.
+
+Only after successful testing:
+
+- Remove `phi4-mini:3.8b` using `ollama rm phi4-mini:3.8b`.
+- Keep `nomic-embed-text:latest`.
+- Update the application's model configuration.
+- Remove references to Phi-4 Mini where they are no longer needed.
+
+IMPORTANT: Removing a model frees disk space, not automatically its currently allocated RAM. Ensure that Ollama unloads the model or restart the Ollama service when appropriate.
+
+Do not remove the embedding model. It is required for vector embeddings and document retrieval.
+
+---
+
+# 5. Phase 3: Optimize PDF Processing and Embeddings
+
+Inspect the complete document ingestion workflow.
+
+The PDF should not be repeatedly extracted, split and embedded whenever a user asks a question.
+
+Implement or verify the following workflow:
+
+### One-time processing during upload
+
+1. Upload PDF.
+2. Extract PDF text.
+3. Split text into appropriate chunks.
+4. Generate embeddings.
+5. Store embeddings in the vector database.
+6. Preserve document metadata, page numbers and source information.
+
+### Processing during subsequent questions
+
+1. Accept the user's question.
+2. Generate an embedding for the question.
+3. Retrieve relevant document chunks.
+4. Construct a concise context.
+5. Pass the context and question to the LLM.
+6. Generate a grounded answer with citations.
+
+### Additional requirements
+
+- Reuse existing embeddings.
+- Avoid unnecessary re-indexing.
+- Persist the vector database.
+- Avoid loading the complete PDF into memory for every question.
+- Prevent duplicate document indexing.
+- Handle multiple PDF uploads correctly.
+- Preserve existing PDF upload functionality.
+
+Do not change the vector database technology unless there is a clear technical reason.
+
+---
+
+# 6. Phase 4: Optimize the Frontend and Backend
+
+My project uses FastAPI and Next.js.
+
+### A. Next.js production mode
+
+For presentation mode, use:
+
+`npm run build`
+
+Then:
+
+`npm run start`
+
+Avoid running the development server during the final presentation unless debugging is required.
+
+The development workflow should remain unchanged for normal development.
+
+### B. FastAPI optimization
+
+Inspect the backend for:
+
+- Unnecessary repeated initialization.
+- Duplicate embedding model instances.
+- Unnecessary database connections.
+- Blocking operations.
+- Excessive memory allocation.
+- Repeated PDF parsing.
+- Unnecessary logging.
+
+Use efficient resource management.
+
+Do not introduce complicated asynchronous execution unless it genuinely improves performance.
+
+### C. Frontend optimization
+
+- Avoid unnecessary API calls.
+- Prevent duplicate question submissions.
+- Show a clear loading indicator.
+- Display answers as soon as they are available.
+- Handle request timeouts and errors properly.
+- Preserve the current UI and functionality.
+
+Do not redesign the frontend.
+
+---
+
+# 7. Phase 5: Create a Presentation Mode
+
+I want the application to be stable and predictable during my college presentation.
+
+Create a dedicated presentation configuration if appropriate.
+
+The presentation configuration should:
+
+- Use the selected lightweight generation model.
+- Use the existing embedding model.
+- Disable unnecessary retrieval features.
+- Use a reduced context window.
+- Limit retrieval chunks.
+- Limit generated tokens.
+- Avoid unnecessary background processes.
+- Use production mode for Next.js.
+- Reuse preprocessed PDF embeddings.
+- Keep the generation model loaded when practical.
+
+### Warm-up functionality
+
+Before the presentation, allow the system to perform a small warm-up request.
+
+This should load the model before the actual demonstration and reduce first-question delays.
+
+Do not perform unnecessary repeated warm-up requests.
+
+### Error handling
+
+If Ollama is unavailable:
+
+- Show a meaningful error.
+- Do not leave the UI loading indefinitely.
+- Do not silently return fabricated answers.
+
+---
+
+# 8. Phase 6: Measure Actual Performance
+
+This is mandatory.
+
+Do not simply tell me that the project is optimized. Measure the performance before and after the changes.
+
+Implement timing measurements for:
+
+1. Question embedding generation.
+2. Vector database retrieval.
+3. Prompt/context preparation.
+4. LLM generation.
+5. Total response time.
+
+Record relevant metrics such as:
+
+- Total response time.
+- Time to first token, if streaming is supported.
+- Tokens generated.
+- Generation speed in tokens per second.
+- Number of retrieved chunks.
+- Model used.
+- Memory consumption when measurable.
+
+Create a before-and-after comparison.
+
+Example:
+
+| Metric | Before | After |
+|---|---|---|
+| Total response time | 86 seconds | Actual measured value |
+| Retrieval time | Actual baseline | Actual result |
+| LLM generation time | Actual baseline | Actual result |
+| Retrieved chunks | 10 | 4 |
+| Model | Phi-4 Mini | Selected model |
+| RAM usage | Actual baseline | Actual result |
+
+Do not invent performance numbers.
+
+Run at least 5 representative questions using the same PDF and compare results.
+
+Include:
+- Simple factual questions.
+- Questions requiring information from multiple sections.
+- Questions involving specific numbers.
+- Questions whose answers are not available in the PDF.
+
+The system must not invent answers when information is missing.
+
+---
+
+# 9. Phase 7: Preserve Existing Functionality
+
+This is extremely important.
+
+Do not break or remove:
+
+- PDF upload.
+- PDF extraction.
+- Document chunking.
+- Embedding generation.
+- Vector database storage.
+- Question-answering functionality.
+- Source citations.
+- Page references.
+- Existing frontend UI.
+- Existing backend API routes.
+- Error handling.
+
+Do not rewrite the entire application.
+
+Make targeted modifications to the existing implementation.
+
+Before changing any file:
+
+1. Inspect the current implementation.
+2. Understand its dependencies.
+3. Identify the exact performance bottleneck.
+4. Make the smallest appropriate change.
+5. Test the affected functionality.
+
+Do not modify unrelated files.
+
+Do not upgrade all project dependencies unnecessarily.
+
+---
+
+# 10. Execution Order
+
+Follow this exact order:
+
+**Stage 1: Project inspection**
+- Inspect project structure.
+- Read the RAG service.
+- Inspect model configuration.
+- Inspect retrieval implementation.
+- Inspect PDF ingestion and vector storage.
+- Identify actual bottlenecks.
+
+**Stage 2: Optimize existing Phi-4 Mini configuration**
+- Remove unnecessary MultiQueryRetriever calls.
+- Optimize retrieval.
+- Disable broken BM25 if applicable.
+- Reduce context and output tokens.
+- Configure Ollama resource limits.
+
+**Stage 3: Test current model**
+- Measure response time.
+- Measure memory consumption.
+- Verify answer quality.
+- Save baseline and optimized results.
+
+**Stage 4: Test smaller model**
+- Install Llama 3.2 1B.
+- Run identical questions.
+- Compare accuracy and speed.
+- Select the better model for presentation.
+
+**Stage 5: Clean up**
+- Remove Phi-4 Mini only after successful validation and confirmation.
+- Keep the embedding model.
+- Remove obsolete configurations.
+
+**Stage 6: Optimize presentation mode**
+- Prepare production frontend.
+- Warm up the model.
+- Preprocess the PDF.
+- Verify the complete workflow.
+
+**Stage 7: Final testing**
+- Run all representative questions.
+- Verify citations.
+- Verify missing-information handling.
+- Check for memory leaks and system lag.
+- Report actual performance improvements.
+
+---
+
+# 11. Strict Rules
+
+1. Zero expenditure. No paid APIs or subscriptions.
+2. No hardware upgrades.
+3. No dedicated GPU requirement.
+4. No unnecessary model downloads.
+5. No complete project rewrite.
+6. No removal of existing features.
+7. No fabricated performance improvements.
+8. No changes without inspecting the relevant code.
+9. No deletion of Phi-4 Mini before validating the replacement model.
+10. No unnecessary dependency upgrades.
+11. Maintain compatibility with the installed versions of Ollama, LangChain, Python and Next.js.
+12. Keep the existing project structure wherever possible.
+
+If any proposed optimization could reduce answer accuracy, explain the trade-off before implementing it.
+
+---
+
+# 12. Final Deliverable
+
+After completing the work, provide a detailed report containing:
+
+1. Original performance problems.
+2. Actual root causes identified from the source code.
+3. Files modified.
+4. Changes implemented in each file.
+5. Model selected and why.
+6. Retrieval configuration before and after.
+7. RAM usage before and after.
+8. Response time before and after.
+9. Answer quality comparison.
+10. Commands required to start the backend.
+11. Commands required to start the frontend.
+12. Commands required to prepare the application for presentation.
+13. Any remaining limitations.
+
+Also provide a clear distinction between completed changes, tested changes and suggested future improvements.
+
+## Final Goal
+
+Make my existing PDF-based RAG project as fast, lightweight, accurate and stable as possible on:
+
+- Intel Core i5-12500H
+- 8 GB RAM
+- Intel integrated graphics
+- CPU-based Ollama inference
+- Windows
+
+I cannot spend money on improving my hardware.
+
+**Prioritize software optimization, memory efficiency, retrieval speed and reliable answer generation. My main requirement is that the application should respond quickly and work smoothly during my college presentation without freezing or lagging my laptop.**
+
+Start by inspecting the actual project. Do not make changes until you understand the existing implementation. Then execute the plan stage by stage and report your findings.

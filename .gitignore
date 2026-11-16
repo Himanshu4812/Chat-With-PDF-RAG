@@ -1,0 +1,92 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+.eggs/
+dist/
+build/
+pip-wheel-metadata/
+
+# Virtual environments
+.env
+.env.*
+!.env.example
+.venv/
+venv/
+env/
+ENV/
+
+# Secrets and credentials
+*.pem
+*.key
+*.p12
+*.pfx
+*secret*
+*credential*
+service-account*.json
+
+# IDE / editors
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Jupyter Notebook
+.ipynb_checkpoints/
+
+# Tests, caches and coverage
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.pyright/
+.cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+junit.xml
+
+# Logs
+logs/
+*.log
+
+# Local data: uploads, vector store, SQLite databases and backups
+data/pdfs/uploads/
+data/vectors/
+data/*.db
+data/*.sqlite
+data/*.sqlite3
+data/*.db-journal
+data/*.db-wal
+data/*.db-shm
+web-ui/data/
+*.db
+*.sqlite
+*.sqlite3
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite3-journal
+*.sqlite3-wal
+*.sqlite3-shm
+
+# Generated benchmark output
+benchmark_results/
+.benchmarks/
+
+# Test tooling caches
+.hypothesis/
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Local archives / scratch files
+College files.zip

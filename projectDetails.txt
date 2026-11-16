@@ -1,0 +1,538 @@
+================================================================================
+OLLAMA PDF RAG - MASTER INTERVIEW GUIDE & ARCHITECTURE REFERENCE
+================================================================================
+Project: Chat with PDF locally using Ollama + LangChain + Next.js + FastAPI
+Repository: tonykipkemboi/ollama_pdf_rag | License: MIT
+Purpose: Comprehensive reference for all technical & non-technical interview 
+         questions, system design details, and architecture specifications.
+
+================================================================================
+TABLE OF CONTENTS
+================================================================================
+1. SECTION 1: ARCHITECTURE & PROJECT OVERVIEW
+2. SECTION 2: NON-TECHNICAL QUESTIONS (For HR & General Panels)
+3. SECTION 3: IN-DEPTH TECHNICAL QUESTIONS & ANSWERS (By Topic)
+   - 3.1 RAG (Retrieval-Augmented Generation) & Retrieval Pipeline
+   - 3.2 Vector Databases, HNSW & Embeddings
+   - 3.3 LLMs, Ollama & Quantization
+   - 3.4 LangChain & LCEL (LangChain Expression Language)
+   - 3.5 System Design, Scalability, Caching & Streaming
+   - 3.6 PDF Parsing & Document Ingestion
+   - 3.7 Engineering, Windows Compatibility & Deployment
+   - 3.8 Reality Check: Orchestration Layer vs. API Calls
+4. SECTION 4: LIMITATIONS & FUTURE IMPROVEMENT ROADMAP
+5. SECTION 5: QUICK-REVISION CHEAT SHEET (One-Liner Memory Hooks)
+
+================================================================================
+SECTION 1: ARCHITECTURE & PROJECT OVERVIEW
+================================================================================
+
+1.1 What is Ollama PDF RAG?
+---------------------------
+A 100% local, privacy-first Retrieval-Augmented Generation (RAG) platform that
+enables users to chat with single or multiple PDF documents simultaneously.
+All embeddings, vector storage, and language model inference run locally on
+the user's machine without any data ever being sent to the cloud or third-party APIs.
+
+1.2 System Architecture Diagram
+-------------------------------
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                              USER INTERFACES                                 │
+├──────────────────────────────────────┬───────────────────────────────────────┤
+│       Next.js 16 (Modern Web UI)     │         Streamlit (Classic UI)        │
+│          http://localhost:3000       │          http://localhost:8501        │
+│   (Real-time streaming, DB chats)    │      (PDF preview + zoom slider)      │
+└──────────────────────────────────────┴───────────────────────────────────────┘
+                                       │
+                                       ▼
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                           FastAPI REST BACKEND                               │
+│                          http://localhost:8001                               │
+├───────────────────┬───────────────────┬───────────────────┬──────────────────┤
+│   PDF Upload/List │     RAG Query     │   Ollama Models   │   Health Check   │
+│   /api/v1/pdfs    │   /api/v1/query   │   /api/v1/models  │   /health        │
+└───────────────────┴───────────────────┴───────────────────┴──────────────────┘
+                                       │
+                    ┌──────────────────┼──────────────────┐
+                    ▼                  ▼                  ▼
+┌─────────────────────────┐ ┌────────────────────┐ ┌───────────────────────────┐
+│     ChromaDB Vector DB  │ │    Ollama Server   │ │   SQLite Metadata Storage │
+│      (data/vectors/)    │ │  (localhost:11434) │ │     (data/api.db &        │
+│  - Isolated Collections │ │  - LLM: llama3.2   │ │   web-ui/data/chat.db)    │
+│  - HNSW Cosine Index    │ │  - nomic-embed-text│ │  - PDF & Chat persistence │
+└─────────────────────────┘ └────────────────────┘ └───────────────────────────┘
+
+1.3 Key Tech Stack Layers
+-------------------------
+| Layer               | Technology Used                                          |
+|---------------------|----------------------------------------------------------|
+| Frontend UI         | Next.js 16 (React 19, Tailwind CSS, Vercel AI SDK, TS)   |
+| Alternative UI      | Streamlit (Quick prototyping & PDF preview)              |
+| API Backend         | FastAPI, Uvicorn, SQLAlchemy, Pydantic                    |
+| Metadata Storage    | SQLite (`data/api.db` for API, `chat.db` for Next.js)     |
+| Orchestration       | LangChain Core, LangChain Ollama, LangChain Classic LCEL |
+| PDF Extraction      | `pdfplumber` (powered by `pdfminer.six`)                 |
+| Text Splitter       | `RecursiveCharacterTextSplitter` (7500 chars / 100 ovlp) |
+| Local LLM Backend   | Ollama (`llama3.2`, `qwen3:8b`, `deepseek-r1`, etc.)     |
+| Embeddings Model    | `nomic-embed-text` (768 dimensions, 8192 context window) |
+| Vector Store        | ChromaDB (Persistent on-disk HNSW index)                 |
+
+1.4 End-to-End Processing Lifecycle
+-----------------------------------
+1. INGESTION:
+   - User uploads PDF -> Saved to `data/pdfs/uploads/`.
+   - `pdfplumber` parses PDF page-by-page.
+   - `RecursiveCharacterTextSplitter` cuts text into 7500-char chunks (100-char overlap).
+   - Metadata (`pdf_id`, `pdf_name`, `page_number`, `chunk_index`, `source`) attached.
+2. EMBEDDING & STORAGE:
+   - Ollama generates 768-dimensional dense vectors via `nomic-embed-text`.
+   - Vectors + metadata persisted into dedicated ChromaDB collections (`pdf_{hash}`).
+   - Record stored in SQLite (`data/api.db`).
+3. QUERY & RETRIEVAL:
+   - User submits question -> Question classifier identifies document query.
+   - `MultiQueryRetriever` asks LLM to generate 2 alternative perspectives of the question.
+   - 3 queries search ChromaDB using Cosine Similarity ($k=3$ chunks per PDF).
+   - Results deduplicated and formatted with `[Source: <filename>]` tags.
+4. SYNTHESIS & CITATION:
+   - Assembled context + user question fed into strict chain-of-thought prompt.
+   - Ollama synthesizes answer and cites specific document sources.
+   - Thinking models (`qwen3`, `deepseek-r1`) extract step-by-step reasoning.
+   - Next.js UI streams answer and displays interactive source badges.
+
+================================================================================
+SECTION 2: NON-TECHNICAL QUESTIONS (For HR & General Panels)
+================================================================================
+*Format: Simple, clear explanations without confusing jargon.*
+
+Q1. What is this project in one simple sentence?
+-----------------------------------------------
+Answer:
+It is a private AI desktop web application where you can upload your PDF documents
+and ask questions about them in plain English, and the AI answers using only the
+information in your files without sending any data over the internet.
+
+Q2. What real-world problem does it solve?
+------------------------------------------
+Answer:
+Searching through 100+ page manuals, financial reports, or legal policies manually
+is slow and tedious. Cloud tools like ChatGPT require uploading files to third-party
+servers, which violates privacy policies for banks, healthcare, and enterprise
+teams. This application allows instant, intelligent querying while guaranteeing
+100% privacy because everything runs locally on the user's laptop.
+
+Q3. How does it work when a user asks a question? (Explain in 5 simple steps)
+----------------------------------------------------------------------------
+Answer:
+1. Upload & Read: The app reads the PDF and divides the text into manageable paragraphs.
+2. Convert to Numbers: It translates each paragraph into a mathematical fingerprint (embedding) and saves it on your computer.
+3. User Question: You type your question in English.
+4. Smart Search: The app finds the top 3-4 paragraphs in your PDFs whose meaning best matches your question.
+5. AI Answer: The app hands those paragraphs to the local AI and says: "Answer the question strictly using only this text, and cite the file name." The AI returns the final answer with source references.
+
+Q4. How is the app "offline" if it uses an API?
+-----------------------------------------------
+Answer:
+It uses an API, but that API runs strictly on your own machine (at `localhost:11434`
+for Ollama and `localhost:8001` for FastAPI). It is like calling an extension inside
+your own house rather than making an international call. Once you download the AI
+models once, you can turn off Wi-Fi completely and the application works normally.
+
+Q5. Does a non-technical person need to do technical setup?
+----------------------------------------------------------
+Answer:
+Currently, yes. It requires installing Ollama, downloading models in the terminal,
+and running Python/Node commands. It is currently designed for developers,
+data scientists, and researchers. To turn it into a commercial product for non-tech
+users, we would package it into a single double-clickable installer (.exe / .dmg).
+
+Q6. Is this project just calling an AI model or sending a prompt?
+-----------------------------------------------------------------
+Answer:
+The AI model provides the raw cognitive ability (reading and language generation),
+like an engine in a car. However, an engine alone cannot drive. This project builds
+the complete car around the engine: reading diverse PDF formats, breaking text
+intelligently, creating vector databases, managing multiple documents, handling
+chat persistence, building a responsive Next.js frontend, and preventing hallucinations.
+
+Q7. What is the business value of this project?
+-----------------------------------------------
+Answer:
+The value lies in productization, privacy compliance, and accuracy. It enables
+air-gapped and highly confidential organizations (legal firms, financial auditors,
+defense, medical institutions) to harness conversational AI on internal knowledge
+bases with zero cloud subscription costs and zero data leakage risk.
+
+Q8. Can it search across multiple PDFs at the same time?
+-------------------------------------------------------
+Answer:
+Yes. You can upload multiple PDFs (e.g., 5 different policy handbooks), select them
+via checkboxes, and ask a question like "Compare the vacation policy across all
+documents." The system searches each document collection, brings together the
+relevant pieces, marks them with `[Source: File.pdf]`, and synthesizes a combined answer.
+
+Q9. What happens if the answer is NOT inside the uploaded PDFs?
+---------------------------------------------------------------
+Answer:
+The system prompt explicitly commands the AI: "If the answer is not contained in
+the provided context, say: 'The provided documents do not contain this information.'"
+This prevents the model from hallucinating or answering from its general training data.
+
+Q10. Why split the PDF into small pieces instead of giving the whole PDF to AI?
+------------------------------------------------------------------------------
+Answer:
+1. Speed & Cost: Sending a 200-page document for every question is extremely slow
+   and requires huge computer memory.
+2. Accuracy: Sending only the 3-5 most relevant paragraphs allows the AI to focus
+   accurately on the exact facts without getting distracted or confused.
+
+Q11. Why is this search better than pressing Ctrl+F (Keyword Search)?
+--------------------------------------------------------------------
+Answer:
+Ctrl+F only finds exact spelling matches. If you search "automobile", Ctrl+F will
+miss pages saying "car" or "vehicle". Our semantic search understands meaning and
+concepts. Furthermore, the system rephrases your question into multiple perspectives
+before searching, ensuring comprehensive retrieval even with informal queries.
+
+Q12. Is user data safe and GDPR/HIPAA friendly?
+----------------------------------------------
+Answer:
+Yes, completely. Data never leaves the host computer's hard drive and memory. No
+analytics, telemetry, or document text is transmitted over the internet, making it
+natively compliant with strict data residency and privacy mandates.
+
+Q13. What are the current limitations of the project?
+-----------------------------------------------------
+Answer:
+1. Scanned Image PDFs: `pdfplumber` only extracts digital text layers; scanned image PDFs require an OCR tool like Tesseract.
+2. Single-user Auth: Currently lacks user authentication/roles out of the box.
+3. Setup Complexity: Requires Ollama installation and terminal familiarity.
+
+Q14. If you had 2 more weeks, what key features would you add?
+--------------------------------------------------------------
+Answer:
+1. OCR fallback for scanned and photocopied PDF support (`pdf2image` + Tesseract).
+2. Hybrid search combining BM25 keyword matching with vector embeddings.
+3. Multi-user authentication (JWT) with per-user document isolation.
+4. Support for DOCX, CSV, Excel, and Markdown files.
+5. Packaged one-click desktop app using Electron or Tauri.
+
+================================================================================
+SECTION 3: IN-DEPTH TECHNICAL QUESTIONS & ANSWERS
+================================================================================
+
+--------------------------------------------------------------------------------
+3.1 RAG (Retrieval-Augmented Generation) & Retrieval Pipeline
+--------------------------------------------------------------------------------
+
+Q15. Explain the entire RAG pipeline from upload to response generation.
+Answer:
+- Step 1 (Ingestion): `pdfplumber` loads the PDF page-by-page. `RecursiveCharacterTextSplitter` breaks text into chunks of 7500 characters with 100 character overlap.
+- Step 2 (Embedding & Persistence): `OllamaEmbeddings(model="nomic-embed-text")` generates 768-dimensional embeddings. ChromaDB stores them in an on-disk collection (`pdf_{hash}`) using an HNSW index.
+- Step 3 (Query Expansion): User question is sent to `MultiQueryRetriever`, which prompts the LLM to generate 2 alternative phrasings (total 3 search queries).
+- Step 4 (Vector Retrieval): Each query executes a cosine similarity search on ChromaDB collections ($k=3$ per PDF). Chunks are deduplicated and aggregated.
+- Step 5 (Context Assembly): Chunks are prefixed with source labels (`[Source: filename.pdf]`) and formatted into a unified prompt context.
+- Step 6 (Generation & Parsing): An LCEL chain feeds the context and question into a strict Chain-of-Thought `ChatPromptTemplate`, processed by `ChatOllama` and parsed via `StrOutputParser()`.
+
+Q16. What is Multi-Query Retrieval and why is it implemented?
+Answer:
+Distance-based vector search often suffers from vocabulary mismatch and query sensitivity. If a user asks "How do I install this?", standard vector search might miss passages titled "System Setup & Prerequisites".
+`MultiQueryRetriever` uses the LLM to generate 2 distinct rephrasings of the user query from different angles. It executes 3 parallel similarity searches and merges the resulting documents, significantly boosting retrieval recall and robustness.
+
+Q17. What are the common failure modes of RAG and how are they mitigated here?
+Answer:
+| Failure Mode              | Cause                                      | Mitigation in this Project                                  |
+|---------------------------|--------------------------------------------|-------------------------------------------------------------|
+| Retrieval Miss            | Vocabulary mismatch / bad phrasing         | MultiQuery expansion (3 queries) + tuned chunk size         |
+| Context Hallucination     | LLM uses pre-training knowledge            | Strict system prompt: fallback to "Not in context" sentence |
+| Lost in the Middle        | Important data buried in huge context      | Context capped to top 10 relevant chunks + source tagging   |
+| Multi-doc Contradiction   | Conflicting info between files             | Source-aware prompting instructing LLM to note discrepancies|
+| Scanned Doc Failure       | PDF contains images rather than text layer | OCR detection recommendation (Tesseract pipeline)           |
+
+Q18. How would you evaluate the quality of this RAG pipeline in production?
+Answer:
+Using the RAG Triad framework (via Ragas or TruLens):
+1. Context Relevance: Are the retrieved chunks relevant to the query? (Measured via NDCG / Precision@K).
+2. Groundedness / Faithfulness: Is the answer derived strictly from retrieved context without hallucinations?
+3. Answer Relevance: Does the generated response directly answer the user's prompt?
+In code: Automated regression test suites using `pytest` with known question-context-answer ground truth sets.
+
+Q19. Explain the chunking strategy trade-offs: Why 7500 characters and 100 overlap?
+Answer:
+- 7500 characters (~1200 - 1500 tokens) captures complete sections, legal clauses, and multi-paragraph technical explanations without breaking thematic cohesion.
+- 100 character overlap preserves sentence continuity across chunk boundaries.
+- Trade-off matrix:
+| Chunk Size         | Pros                                      | Cons                                       |
+|--------------------|-------------------------------------------|--------------------------------------------|
+| Small (200-500)    | High vector precision, low retrieval noise| Splits paragraphs, loses broader context   |
+| Medium (1000-2000) | Balanced general-purpose retrieval        | May split long complex technical tables    |
+| Large (5000-7500)  | Preserves full context and section depth  | Slight retrieval noise; requires 8K+ window|
+
+--------------------------------------------------------------------------------
+3.2 Vector Databases, HNSW & Embeddings
+--------------------------------------------------------------------------------
+
+Q20. How does ChromaDB work internally?
+Answer:
+ChromaDB uses HNSW (Hierarchical Navigable Small World) as its default approximate nearest neighbor (ANN) index:
+- Multi-layer graph: Top layers contain sparser nodes with long-range links ("express highways"); bottom layers contain all nodes with dense local links.
+- Search process: Traversal begins at the top layer, greedily navigates to the closest node, steps down a layer, and repeats until reaching the target cluster.
+- Persistence: Stored under `data/vectors/` containing UUID collections with `header.bin` (metadata), `data_level0.bin` (vectors), and `link_lists.bin` (graph edges).
+
+Q21. Why choose `nomic-embed-text` over OpenAI's `text-embedding-3-small`?
+Answer:
+| Feature              | nomic-embed-text (Used)     | text-embedding-3-small (Cloud) |
+|----------------------|-----------------------------|--------------------------------|
+| Hosting              | 100% Local (via Ollama)     | Cloud API (OpenAI)             |
+| Privacy & Security   | Air-gapped, zero data leak  | Third-party server processing  |
+| Cost                 | Free & Open-Source (MIT)    | Per-token pricing              |
+| Dimensions           | 768                         | 1536 (default) / 512           |
+| Context Length       | 8,192 tokens                | 8,191 tokens                   |
+| Performance          | Competitive on MTEB leaderb.| Industry benchmark standard    |
+
+Q22. Compare Cosine Similarity, Dot Product, and Euclidean Distance.
+Answer:
+- Cosine Similarity: Measures the angle/direction between two vectors regardless of magnitude: $\cos(\theta) = \frac{A \cdot B}{\|A\| \|B\|}$. Best for text embeddings because document length differences should not distort semantic similarity. ChromaDB default.
+- Dot Product: Fast calculation ($A \cdot B$). Identical to Cosine Similarity when vectors are L2-normalized.
+- Euclidean Distance (L2): Measures straight-line spatial distance. Sensitive to vector magnitude; poor for raw text chunks of varying sizes.
+
+Q23. How would you implement Hybrid Search (BM25 + Semantic Search)?
+Answer:
+Vector search struggles with exact serial numbers, version strings ("Ollama 0.6.0"), or rare acronyms.
+Implementation via LangChain:
+```python
+from langchain_community.retrievers import BM25Retriever
+from langchain.retrievers import EnsembleRetriever
+
+bm25_retriever = BM25Retriever.from_documents(chunks)
+bm25_retriever.k = 3
+
+vector_retriever = vector_db.as_retriever(search_kwargs={"k": 3})
+
+# Ensemble with Reciprocal Rank Fusion (RRF)
+ensemble_retriever = EnsembleRetriever(
+    retrievers=[bm25_retriever, vector_retriever],
+    weights=[0.3, 0.7]  # 30% keyword match, 70% semantic meaning
+)
+```
+
+--------------------------------------------------------------------------------
+3.3 LLMs, Ollama & Quantization
+--------------------------------------------------------------------------------
+
+Q24. What is GGUF quantization and how does Ollama utilize it?
+Answer:
+GGUF (GPT-Generated Unified Format) stores quantized model weights to run large models on consumer GPUs/CPUs:
+| Quantization Level | Bits/Weight | Memory Footprint (7B model) | Quality / Perplexity Impact   |
+|--------------------|-------------|-----------------------------|-------------------------------|
+| q4_0 / q4_k_m      | 4-bit       | ~3.8 - 4.5 GB               | Minimal loss; optimal speed   |
+| q5_k_m             | 5-bit       | ~5.0 - 5.5 GB               | Near FP16 quality             |
+| q8_0               | 8-bit       | ~7.5 - 8.0 GB               | Indistinguishable from FP16   |
+| f16                | 16-bit      | ~14.0 GB                    | Full unquantized baseline     |
+For RAG summarization, 4-bit and 5-bit quantization provide high throughput with negligible quality degradation.
+
+Q25. How does this codebase handle "Thinking Models" (e.g., Qwen3, DeepSeek-R1)?
+Answer:
+In `src/api/services/rag_service.py`:
+1. The backend detects if the active model is a thinking-capable model (`qwen3`, `deepseek-r1`).
+2. It injects a detailed Chain-of-Thought system prompt instructing the model to show its reasoning steps.
+3. It calls Ollama with `think=True`, captures the model's internal thinking stream (`response.message.thinking`), and appends it to `reasoning_steps` for frontend display in an expandable accordion.
+
+--------------------------------------------------------------------------------
+3.4 LangChain & LCEL (LangChain Expression Language)
+--------------------------------------------------------------------------------
+
+Q26. What is a LangChain Runnable and how does the LCEL pipe (`|`) work?
+Answer:
+`Runnable` is the standard protocol implemented by LangChain components (prompts, models, retrievers, output parsers). It enforces standard execution methods: `.invoke()`, `.batch()`, `.stream()`, `.ainvoke()`, `.abatch()`, and `.astream()`.
+The pipe operator (`|`) composes Runnables sequentially where the output of one step automatically feeds into the input of the next:
+```python
+chain = (
+    {"context": retriever, "question": RunnablePassthrough()}
+    | prompt_template
+    | chat_ollama_model
+    | StrOutputParser()
+)
+response = chain.invoke("What is the refund policy?")
+```
+
+Q27. Compare LCEL with the legacy `LLMChain` approach.
+Answer:
+| Feature              | LCEL (Modern LangChain)         | Legacy Chains (`LLMChain`, `RetrievalQA`) |
+|----------------------|---------------------------------|-------------------------------------------|
+| Syntax               | Functional composition (`a | b`)| Rigid class inheritance hierarchy         |
+| Streaming            | Out-of-the-box (`.stream()`)    | Requires custom callbacks                 |
+| Async Execution      | Unified (`.ainvoke()`)          | Clunky separate async classes             |
+| Parallel Execution   | Automatic batching (`.batch()`) | Manual thread pooling                     |
+| Transparency         | Inspection via `.get_graph()`   | Black-box internal execution              |
+
+--------------------------------------------------------------------------------
+3.5 System Design, Scalability, Caching & Streaming
+--------------------------------------------------------------------------------
+
+Q28. How would you scale this architecture to handle 10,000+ PDFs?
+Answer:
+1. Asynchronous Distributed Ingestion: Move document ingestion and embedding generation to background workers using Celery / Redis Queue.
+2. Centralized Vector Storage: Migrate from local embedded ChromaDB SQLite to distributed vector instances (e.g., Milvus, Qdrant cluster, or pgvector).
+3. Embedding Caching: Store a SHA-256 hash of chunk text -> vector in Redis so identical chunks are never re-embedded.
+4. Model Serving Cluster: Run multiple Ollama instances behind a load balancer (HAProxy/Nginx) with GPU pooling.
+
+Q29. How does Streaming work in the application?
+Answer:
+- In the Next.js Frontend (`web-ui`): Leverages Vercel AI SDK and Ollama streaming to stream tokens directly to the chat interface.
+- In FastAPI: Streaming endpoints utilize Server-Sent Events (SSE) via `StreamingResponse`:
+```python
+from fastapi.responses import StreamingResponse
+
+@router.post("/api/v1/query/stream")
+async def query_stream(request: QueryRequest):
+    async def event_generator():
+        async for chunk in chain.astream(request.question):
+            yield f"data: {json.dumps({'token': chunk})}\n\n"
+        yield "data: [DONE]\n\n"
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+```
+
+Q30. How would you implement multi-tenant isolation and user authentication?
+Answer:
+1. Auth: Attach JWT Bearer token authentication in FastAPI (`dependencies.py`).
+2. Collection Partitioning: Prefix ChromaDB collection names with tenant/user IDs: `user_{user_id}_{hash(pdf_name)}`.
+3. Storage Isolation: Store uploaded physical PDFs in partitioned directories: `data/pdfs/{tenant_id}/{user_id}/`.
+4. Metadata Scoping: Filter SQLite/PostgreSQL metadata queries with `WHERE tenant_id = :tenant_id`.
+
+--------------------------------------------------------------------------------
+3.6 PDF Parsing & Document Ingestion
+--------------------------------------------------------------------------------
+
+Q31. Why `pdfplumber` over PyPDF or PyMuPDF?
+Answer:
+| Library         | Strengths                                  | Weaknesses                              |
+|-----------------|--------------------------------------------|-----------------------------------------|
+| `pdfplumber`    | High-precision layout & table extraction   | Moderate extraction speed               |
+| `PyMuPDF (fitz)`| Extremely fast; lightweight C-bindings     | Table structural parsing requires tuning|
+| `pdfminer.six`  | Raw coordinate extraction & layout analysis| Slow; low-level API                     |
+| `Tesseract OCR` | Extracts text from scanned image PDFs      | High CPU/GPU usage; requires image prep |
+*Note:* `pdfplumber` internally builds upon `pdfminer.six`, combining high-level usability with detailed layout inspection.
+
+Q32. How do you handle scanned (photocopied/image-only) PDFs?
+Answer:
+When `pdfplumber` extracts an empty or whitespace-only string from a PDF page, trigger an OCR fallback pipeline:
+```python
+from pdf2image import convert_from_path
+import pytesseract
+from langchain_core.documents import Document
+
+def extract_with_ocr_fallback(pdf_path: str) -> list[Document]:
+    docs = DocumentProcessor().load_pdf(pdf_path)
+    # Check if text was extracted
+    total_chars = sum(len(d.page_content) for d in docs)
+    if total_chars < 50:  # Scanned image document detected
+        images = convert_from_path(pdf_path)
+        docs = []
+        for i, img in enumerate(images):
+            text = pytesseract.image_to_string(img)
+            docs.append(Document(page_content=text, metadata={"source": pdf_path, "page_number": i + 1}))
+    return docs
+```
+
+--------------------------------------------------------------------------------
+3.7 Engineering, Windows Compatibility & Deployment
+--------------------------------------------------------------------------------
+
+Q33. What is the `PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=python` setting for?
+Answer:
+ChromaDB utilizes Protocol Buffers for vector serialization. On Windows systems lacking Microsoft Visual C++ redistributables, the compiled C++ protobuf engine fails with `onnx_copy2py_export` DLL errors. Setting this environment variable forces Python's pure-Python protobuf implementation, guaranteeing cross-platform stability.
+
+Q34. How do you deploy this full-stack system with Docker Compose?
+Answer:
+```yaml
+version: '3.8'
+services:
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama_service
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_models:/root/.ollama
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    container_name: fastapi_backend
+    ports:
+      - "8001:8001"
+    environment:
+      - OLLAMA_HOST=http://ollama:11434
+    depends_on:
+      - ollama
+
+  web:
+    build:
+      context: ./web-ui
+      dockerfile: Dockerfile.ui
+    container_name: nextjs_ui
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://api:8001
+    depends_on:
+      - api
+
+volumes:
+  ollama_models:
+```
+
+--------------------------------------------------------------------------------
+3.8 Reality Check: Orchestration Layer vs. API Calls
+--------------------------------------------------------------------------------
+
+Q35. "Isn't this project just calling Ollama's API with a prompt?" (How to answer honestly)
+Answer:
+"Yes and no. The heavy cognitive linguistic processing is delegated to Ollama's local LLMs, just as a web application delegates data storage to PostgreSQL. 
+However, calling an LLM directly is just 10 lines of script. The real engineering value of this project is the end-to-end orchestration and productization:
+1. Resilient multi-page PDF ingestion and boundary-aware chunking.
+2. Embedding lifecycle management and isolated per-PDF vector indexing.
+3. Multi-Query expansion to overcome distance-search blindspots.
+4. Source-attribution routing across multi-document contexts.
+5. Production-grade dual-tier architecture: FastAPI REST services + Next.js 16 reactive UI with chat persistence and streaming."
+
+================================================================================
+SECTION 4: LIMITATIONS & FUTURE IMPROVEMENT ROADMAP
+================================================================================
+
+| Area                    | Current State                             | Production Target Improvement                    |
+|-------------------------|-------------------------------------------|--------------------------------------------------|
+| OCR Support             | Text-only PDFs via `pdfplumber`           | Automatic OCR fallback via `pytesseract`         |
+| Search Precision        | Dense Vector Cosine Similarity            | Hybrid Search (BM25 + Dense RRF Ensemble)        |
+| Multi-Format Support    | PDF only                                  | DOCX, Markdown, PPTX, CSV & HTML loaders         |
+| Authentication & Tenants| Single local user session                 | NextAuth / FastAPI JWT + PostgreSQL RBAC        |
+| Distribution            | Manual CLI & package setup                | Tauri / Electron one-click standalone installer  |
+| Asynchronous Execution  | Synchronous FastAPI query endpoint        | Celery / Redis background worker task queue      |
+
+================================================================================
+SECTION 5: QUICK-REVISION CHEAT SHEET (One-Liner Memory Hooks)
+================================================================================
+• Core Concept: RAG = Ingestion -> Chunking -> Embedding -> Vector DB -> Retrieval -> Prompt Augmentation -> Generation.
+• Offline Guarantee: Runs entirely on `localhost:11434` (Ollama) & `localhost:8001` (FastAPI) without internet.
+• Chunking Defaults: `RecursiveCharacterTextSplitter` (7500 characters, 100 character overlap).
+• Embedding Model: `nomic-embed-text` (768 dimensions, 8192 token limit, local, open-source).
+• Vector Store: ChromaDB with HNSW indexing and Cosine Distance metric persisted in `data/vectors/`.
+• Retrieval Optimization: `MultiQueryRetriever` (generates 2 alternative query perspectives via LLM).
+• Chain Standard: LangChain LCEL pipe syntax (`|`) using `ChatPromptTemplate` and `StrOutputParser`.
+• Parsing Engine: `pdfplumber` built on `pdfminer.six`.
+• Frontend Architecture: Next.js 16 (React 19, TypeScript, Tailwind CSS, Vercel AI SDK).
+• Backend Architecture: FastAPI REST API with SQLite metadata database (`data/api.db`).
+• Hallucination Defense: Strict system prompt forcing fallback to "The provided documents do not contain this information."
+• Windows Fix: `PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=python` prevents ONNX protobuf DLL crashes.
+
+================================================================================
+END OF DOCUMENT
+================================================================================

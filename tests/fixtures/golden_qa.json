@@ -1,0 +1,21 @@
+[
+  {
+    "id": "scam-001",
+    "question": "What tactics does the scammer-agent document describe?",
+    "expected_keywords": ["scam", "agent"],
+    "min_chunks": 1
+  },
+  {
+    "id": "general-001",
+    "question": "Summarize the uploaded document in 3 bullet points.",
+    "expected_keywords": [],
+    "min_chunks": 1
+  },
+  {
+    "id": "citation-001",
+    "question": "What does the document say, with source citations?",
+    "expected_keywords": ["Source"],
+    "min_chunks": 1,
+    "requires_citation_format": true
+  }
+]
